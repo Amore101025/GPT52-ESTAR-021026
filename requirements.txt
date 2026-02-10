@@ -14,3 +14,9 @@ anthropic
 httpx
 reportlab
 protobuf
+tenacity
+python-docx
+fpdf2
+reportlab
+pandas
+tiktoken
