@@ -18,5 +18,6 @@ tenacity
 python-docx
 fpdf2
 reportlab
-pandas
 tiktoken
+reportlab
+chardet
