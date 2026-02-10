@@ -8,12 +8,12 @@ import random
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 import streamlit as st
-
-# Optional deps in requirements.txt
 import yaml  # PyYAML
+import httpx  # for font download
 from fpdf import FPDF  # fpdf2
 from pypdf import PdfReader  # pypdf
 
@@ -27,6 +27,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 
 # ----------------------------
 # i18n
@@ -58,7 +59,6 @@ I18N = {
         "providers": "Providers",
         "provider_ready": "Ready",
         "provider_missing": "Missing key",
-        "provider_error": "Error",
         "settings_api_keys": "API Keys",
         "settings_env_key_detected": "Key detected from environment (hidden).",
         "settings_enter_key": "Enter API key (stored in session only).",
@@ -70,7 +70,6 @@ I18N = {
         "settings_privacy_text": "Your content may be sent to the model provider(s) you select. Avoid uploading sensitive data unless necessary.",
         "dash_overview": "Overview",
         "dash_recent": "Recent Activity",
-        "dash_metrics": "Metrics",
         "dash_field_stats": "Field Stats",
         "dash_pipeline_health": "Pipeline Health",
         "dash_latency": "Latency (last run)",
@@ -78,7 +77,6 @@ I18N = {
         "dash_cost": "Cost Estimate",
         "dash_not_available": "Not available",
         "dash_pdf_ready": "PDF Ready",
-        "dash_last_pdf": "Last PDF",
         "form_input": "Form Input",
         "form_use_default": "Use default sample (sample.md)",
         "form_use_custom": "Provide new application form",
@@ -88,7 +86,6 @@ I18N = {
         "form_preview": "Preview",
         "form_next": "Proceed to pipeline",
         "pipeline_title": "Agent Pipeline (Step-by-step, editable)",
-        "pipeline_controls": "Controls",
         "pipeline_model": "Model",
         "pipeline_max_tokens": "Max tokens",
         "pipeline_prompt": "Prompt (editable)",
@@ -115,36 +112,38 @@ I18N = {
         "btn_save_version": "Save version",
         "btn_restore": "Restore",
         "btn_delete": "Delete",
-        # NEW: Spec tab strings
+        # Spec tab
         "spec_title": "PDF Build Spec → Dynamic PDF",
-        "spec_subtitle": "Paste YAML/JSON spec (or Markdown-wrapped) to generate a fillable PDF.",
+        "spec_subtitle": "Paste YAML/JSON spec (or Markdown-wrapped) to generate a Unicode-safe fillable PDF.",
         "spec_source": "Spec source",
-        "spec_use_last": "Use last generated spec",
+        "spec_use_last": "Use last valid spec",
         "spec_paste_new": "Paste new spec",
-        "spec_load_example": "Load example spec",
+        "spec_load_default": "Load defaultpdfspec.md",
         "spec_editor": "Spec editor (YAML/JSON or Markdown-wrapped)",
         "spec_validate": "Validate spec",
         "spec_generate": "Generate dynamic PDF",
         "spec_reset_last_valid": "Reset to last valid spec",
         "spec_strict": "Strict mode (fail on warnings)",
-        "spec_units": "Units",
+        "spec_units": "Units (input)",
         "spec_unit_mm": "mm",
         "spec_unit_pt": "pt",
-        "spec_page_size": "Page size",
+        "spec_page_size": "Page size (fallback)",
         "spec_a4": "A4",
         "spec_letter": "Letter",
         "spec_preview": "PDF preview",
         "spec_download": "Download PDF",
+        "spec_open_new_tab": "Open PDF in a new tab",
         "spec_upload_pdf": "Upload modified PDF",
         "spec_reconcile": "Reconcile uploaded PDF vs spec",
         "spec_render_log": "Render log",
         "spec_validation": "Validation report",
         "spec_reconcile_report": "Reconciliation report",
-        "spec_last_valid": "Last valid spec",
-        "spec_no_last_spec": "No last spec available yet.",
         "spec_no_pdf": "No PDF generated yet.",
         "spec_save_version": "Save version (spec + PDF)",
-        "spec_open_new_tab": "Open PDF in a new tab",
+        "font_status": "Unicode fonts",
+        "font_ready": "Ready",
+        "font_downloading": "Downloading…",
+        "font_failed": "Unavailable (will sanitize text)",
     },
     "zh-TW": {
         "app_title": "WOW 代理式 PDF 工作室",
@@ -172,7 +171,6 @@ I18N = {
         "providers": "供應商",
         "provider_ready": "可用",
         "provider_missing": "缺少金鑰",
-        "provider_error": "錯誤",
         "settings_api_keys": "API 金鑰",
         "settings_env_key_detected": "已從環境變數偵測到金鑰（已隱藏）。",
         "settings_enter_key": "輸入 API 金鑰（僅保存在本次 session）。",
@@ -184,7 +182,6 @@ I18N = {
         "settings_privacy_text": "你的內容可能會送到你選擇的模型供應商。除非必要，請避免上傳敏感資料。",
         "dash_overview": "總覽",
         "dash_recent": "近期活動",
-        "dash_metrics": "指標",
         "dash_field_stats": "欄位統計",
         "dash_pipeline_health": "流程健康度",
         "dash_latency": "延遲（上次執行）",
@@ -192,7 +189,6 @@ I18N = {
         "dash_cost": "費用估算",
         "dash_not_available": "不可用",
         "dash_pdf_ready": "PDF 就緒",
-        "dash_last_pdf": "最新 PDF",
         "form_input": "表單輸入",
         "form_use_default": "使用預設範例（sample.md）",
         "form_use_custom": "提供新的申請表",
@@ -202,7 +198,6 @@ I18N = {
         "form_preview": "預覽",
         "form_next": "前往代理流程",
         "pipeline_title": "代理流程（逐步執行、可編輯）",
-        "pipeline_controls": "控制項",
         "pipeline_model": "模型",
         "pipeline_max_tokens": "Max tokens",
         "pipeline_prompt": "提示詞（可編輯）",
@@ -229,36 +224,38 @@ I18N = {
         "btn_save_version": "儲存版本",
         "btn_restore": "還原",
         "btn_delete": "刪除",
-        # NEW: Spec tab strings
+        # Spec tab
         "spec_title": "PDF 建置規格 → 動態 PDF",
-        "spec_subtitle": "貼上 YAML/JSON 規格（可用 Markdown 包住）以生成可填寫 PDF。",
+        "spec_subtitle": "貼上 YAML/JSON 規格（可用 Markdown 包住）以生成支援 Unicode 的可填寫 PDF。",
         "spec_source": "規格來源",
-        "spec_use_last": "使用上次生成的規格",
+        "spec_use_last": "使用上次有效規格",
         "spec_paste_new": "貼上新規格",
-        "spec_load_example": "載入範例規格",
+        "spec_load_default": "載入 defaultpdfspec.md",
         "spec_editor": "規格編輯器（YAML/JSON 或 Markdown 包裝）",
         "spec_validate": "驗證規格",
         "spec_generate": "生成動態 PDF",
         "spec_reset_last_valid": "重置為上次有效規格",
         "spec_strict": "嚴格模式（有警告就失敗）",
-        "spec_units": "單位",
+        "spec_units": "單位（輸入）",
         "spec_unit_mm": "mm",
         "spec_unit_pt": "pt",
-        "spec_page_size": "紙張大小",
+        "spec_page_size": "紙張大小（備援）",
         "spec_a4": "A4",
         "spec_letter": "Letter",
         "spec_preview": "PDF 預覽",
         "spec_download": "下載 PDF",
+        "spec_open_new_tab": "在新分頁開啟 PDF",
         "spec_upload_pdf": "上傳已修改的 PDF",
         "spec_reconcile": "比對：上傳 PDF vs 規格",
         "spec_render_log": "渲染記錄",
         "spec_validation": "驗證報告",
         "spec_reconcile_report": "比對報告",
-        "spec_last_valid": "上次有效規格",
-        "spec_no_last_spec": "目前尚無上次規格可用。",
         "spec_no_pdf": "尚未生成 PDF。",
         "spec_save_version": "儲存版本（規格 + PDF）",
-        "spec_open_new_tab": "在新分頁開啟 PDF",
+        "font_status": "Unicode 字型",
+        "font_ready": "可用",
+        "font_downloading": "下載中…",
+        "font_failed": "不可用（將改用文字清理避免崩潰）",
     },
 }
 
@@ -269,7 +266,7 @@ def t(key: str) -> str:
 
 
 # ----------------------------
-# Painter styles
+# Painter styles (20)
 # ----------------------------
 @dataclass
 class PainterStyle:
@@ -283,174 +280,69 @@ class PainterStyle:
 
 
 PAINTER_STYLES: List[PainterStyle] = [
-    PainterStyle(
-        key="vangogh",
-        name_en="Vincent van Gogh",
-        name_zh="梵谷",
-        description="Bold strokes, starry accents, high-contrast warmth.",
-        palette_light={"bg": "#FBF6EA", "fg": "#1A1A1A", "card": "#FFFFFF", "border": "#E8DCC2", "accent": "#2A6F97", "accent2": "#FCA311"},
-        palette_dark={"bg": "#0B1320", "fg": "#EDEDED", "card": "#121B2B", "border": "#1E2A44", "accent": "#2A9D8F", "accent2": "#F4D35E"},
-    ),
-    PainterStyle(
-        key="monet",
-        name_en="Claude Monet",
-        name_zh="莫內",
-        description="Soft gradients, airy spacing, gentle water-lily calm.",
-        palette_light={"bg": "#F4FAFB", "fg": "#14213D", "card": "#FFFFFF", "border": "#D7EEF2", "accent": "#277DA1", "accent2": "#90BE6D"},
-        palette_dark={"bg": "#09151A", "fg": "#EAF6F7", "card": "#0F222A", "border": "#183642", "accent": "#4D96FF", "accent2": "#6BCB77"},
-    ),
-    PainterStyle(
-        key="picasso",
-        name_en="Pablo Picasso",
-        name_zh="畢卡索",
-        description="Geometric rhythm, sharp edges, confident blocks.",
-        palette_light={"bg": "#FAFAFA", "fg": "#111827", "card": "#FFFFFF", "border": "#E5E7EB", "accent": "#2563EB", "accent2": "#F59E0B"},
-        palette_dark={"bg": "#0B0F19", "fg": "#F3F4F6", "card": "#101827", "border": "#1F2937", "accent": "#60A5FA", "accent2": "#FBBF24"},
-    ),
-    PainterStyle(
-        key="dali",
-        name_en="Salvador Dalí",
-        name_zh="達利",
-        description="Surreal shimmer, dramatic highlights, dreamlike contrast.",
-        palette_light={"bg": "#FFF7ED", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FED7AA", "accent": "#7C3AED", "accent2": "#EF4444"},
-        palette_dark={"bg": "#120B1C", "fg": "#F5F3FF", "card": "#1A1028", "border": "#2B1B3E", "accent": "#A78BFA", "accent2": "#FB7185"},
-    ),
-    PainterStyle(
-        key="davinci",
-        name_en="Leonardo da Vinci",
-        name_zh="達文西",
-        description="Renaissance restraint, parchment warmth, precise lines.",
-        palette_light={"bg": "#FBF3E4", "fg": "#2B2B2B", "card": "#FFFFFF", "border": "#E7D2B1", "accent": "#6B4F2A", "accent2": "#2F6F6D"},
-        palette_dark={"bg": "#17120A", "fg": "#F3E9D7", "card": "#1E170D", "border": "#2D2214", "accent": "#D4A373", "accent2": "#4D908E"},
-    ),
-    PainterStyle(
-        key="michelangelo",
-        name_en="Michelangelo",
-        name_zh="米開朗基羅",
-        description="Sculptural clarity, marble neutrals, bold shadows.",
-        palette_light={"bg": "#F7F7F7", "fg": "#111111", "card": "#FFFFFF", "border": "#E2E2E2", "accent": "#374151", "accent2": "#B91C1C"},
-        palette_dark={"bg": "#0D0F12", "fg": "#F5F5F5", "card": "#141820", "border": "#222833", "accent": "#9CA3AF", "accent2": "#F87171"},
-    ),
-    PainterStyle(
-        key="rembrandt",
-        name_en="Rembrandt",
-        name_zh="林布蘭",
-        description="Chiaroscuro depth, golden highlights, intimate focus.",
-        palette_light={"bg": "#FFF8E7", "fg": "#1C1917", "card": "#FFFFFF", "border": "#E7D6B7", "accent": "#92400E", "accent2": "#0F766E"},
-        palette_dark={"bg": "#0E0B07", "fg": "#F5EBDD", "card": "#15100B", "border": "#2A1D12", "accent": "#F59E0B", "accent2": "#2DD4BF"},
-    ),
-    PainterStyle(
-        key="vermeer",
-        name_en="Johannes Vermeer",
-        name_zh="維梅爾",
-        description="Quiet luminosity, Delft blues, crisp composure.",
-        palette_light={"bg": "#F2F6FF", "fg": "#0F172A", "card": "#FFFFFF", "border": "#DDE6F7", "accent": "#1D4ED8", "accent2": "#EAB308"},
-        palette_dark={"bg": "#0A1022", "fg": "#E8EEFF", "card": "#0F1935", "border": "#1A2A57", "accent": "#60A5FA", "accent2": "#FDE047"},
-    ),
-    PainterStyle(
-        key="klimt",
-        name_en="Gustav Klimt",
-        name_zh="克林姆",
-        description="Gold ornament, luxurious contrasts, art-nouveau glow.",
-        palette_light={"bg": "#FFFBEB", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FDE68A", "accent": "#B45309", "accent2": "#7C3AED"},
-        palette_dark={"bg": "#130F07", "fg": "#FFF7D6", "card": "#1B150B", "border": "#3B2F16", "accent": "#FBBF24", "accent2": "#C4B5FD"},
-    ),
-    PainterStyle(
-        key="kandinsky",
-        name_en="Wassily Kandinsky",
-        name_zh="康丁斯基",
-        description="Abstract energy, vibrant accents, playful structure.",
-        palette_light={"bg": "#F8FAFC", "fg": "#0F172A", "card": "#FFFFFF", "border": "#E2E8F0", "accent": "#EF4444", "accent2": "#3B82F6"},
-        palette_dark={"bg": "#070B12", "fg": "#E2E8F0", "card": "#0C1220", "border": "#1C2A44", "accent": "#FB7185", "accent2": "#60A5FA"},
-    ),
-    PainterStyle(
-        key="pollock",
-        name_en="Jackson Pollock",
-        name_zh="波洛克",
-        description="Splatter dynamism, high contrast, bold UI punch.",
-        palette_light={"bg": "#FFFFFF", "fg": "#111827", "card": "#FAFAFA", "border": "#E5E7EB", "accent": "#111827", "accent2": "#10B981"},
-        palette_dark={"bg": "#050505", "fg": "#FAFAFA", "card": "#0E0E0E", "border": "#222222", "accent": "#F97316", "accent2": "#34D399"},
-    ),
-    PainterStyle(
-        key="matisse",
-        name_en="Henri Matisse",
-        name_zh="馬諦斯",
-        description="Fauvist color blocks, friendly warmth, clean space.",
-        palette_light={"bg": "#FFF5F5", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FED7D7", "accent": "#E11D48", "accent2": "#2563EB"},
-        palette_dark={"bg": "#1A0B0F", "fg": "#FFE4EA", "card": "#241017", "border": "#3B1723", "accent": "#FB7185", "accent2": "#93C5FD"},
-    ),
-    PainterStyle(
-        key="munch",
-        name_en="Edvard Munch",
-        name_zh="孟克",
-        description="Expressionist intensity, moody tones, striking alerts.",
-        palette_light={"bg": "#FDF2F8", "fg": "#111827", "card": "#FFFFFF", "border": "#FBCFE8", "accent": "#7F1D1D", "accent2": "#0EA5E9"},
-        palette_dark={"bg": "#12060C", "fg": "#FCE7F3", "card": "#1C0B12", "border": "#3A1226", "accent": "#F87171", "accent2": "#38BDF8"},
-    ),
-    PainterStyle(
-        key="kahlo",
-        name_en="Frida Kahlo",
-        name_zh="芙烈達·卡蘿",
-        description="Vivid botanicals, bold identity, confident accent colors.",
-        palette_light={"bg": "#F0FDF4", "fg": "#052E16", "card": "#FFFFFF", "border": "#BBF7D0", "accent": "#16A34A", "accent2": "#DC2626"},
-        palette_dark={"bg": "#05140B", "fg": "#DCFCE7", "card": "#0A1E11", "border": "#12351F", "accent": "#4ADE80", "accent2": "#FB7185"},
-    ),
-    PainterStyle(
-        key="warhol",
-        name_en="Andy Warhol",
-        name_zh="安迪·沃荷",
-        description="Pop Art punch, neon accents, crisp modular layout.",
-        palette_light={"bg": "#FDF4FF", "fg": "#111827", "card": "#FFFFFF", "border": "#F5D0FE", "accent": "#A21CAF", "accent2": "#2563EB"},
-        palette_dark={"bg": "#130414", "fg": "#FAE8FF", "card": "#1F0820", "border": "#3B0F3D", "accent": "#E879F9", "accent2": "#93C5FD"},
-    ),
-    PainterStyle(
-        key="hokusai",
-        name_en="Hokusai",
-        name_zh="北齋",
-        description="Ukiyo-e calm, wave blues, disciplined typography.",
-        palette_light={"bg": "#F0F9FF", "fg": "#0F172A", "card": "#FFFFFF", "border": "#BAE6FD", "accent": "#0369A1", "accent2": "#F97316"},
-        palette_dark={"bg": "#04131C", "fg": "#E0F2FE", "card": "#071E2B", "border": "#0C3144", "accent": "#38BDF8", "accent2": "#FDBA74"},
-    ),
-    PainterStyle(
-        key="qibaishi",
-        name_en="Qi Baishi",
-        name_zh="齊白石",
-        description="Ink simplicity, vermilion seal accents, airy margins.",
-        palette_light={"bg": "#FFFEF7", "fg": "#111111", "card": "#FFFFFF", "border": "#EEE6D9", "accent": "#C1121F", "accent2": "#1D3557"},
-        palette_dark={"bg": "#0B0A08", "fg": "#F5F1E8", "card": "#141210", "border": "#292420", "accent": "#F87171", "accent2": "#93C5FD"},
-    ),
-    PainterStyle(
-        key="zhangdaqian",
-        name_en="Zhang Daqian",
-        name_zh="張大千",
-        description="Splash-ink elegance, mineral blues/greens, refined contrast.",
-        palette_light={"bg": "#F6FFFE", "fg": "#0F172A", "card": "#FFFFFF", "border": "#D1FAE5", "accent": "#065F46", "accent2": "#1D4ED8"},
-        palette_dark={"bg": "#041310", "fg": "#D1FAE5", "card": "#07241D", "border": "#0E3A2F", "accent": "#34D399", "accent2": "#93C5FD"},
-    ),
-    PainterStyle(
-        key="okeeffe",
-        name_en="Georgia O’Keeffe",
-        name_zh="喬治亞·歐姬芙",
-        description="Modern calm, spacious composition, floral accent warmth.",
-        palette_light={"bg": "#FFF7ED", "fg": "#111827", "card": "#FFFFFF", "border": "#FFEDD5", "accent": "#EA580C", "accent2": "#0F766E"},
-        palette_dark={"bg": "#160C05", "fg": "#FFEDD5", "card": "#1E1208", "border": "#3A210F", "accent": "#FDBA74", "accent2": "#2DD4BF"},
-    ),
-    PainterStyle(
-        key="turner",
-        name_en="J.M.W. Turner",
-        name_zh="透納",
-        description="Luminous haze, sunset gradients, gentle emphasis cues.",
-        palette_light={"bg": "#FFFAF0", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FDE2C5", "accent": "#F59E0B", "accent2": "#3B82F6"},
-        palette_dark={"bg": "#100B06", "fg": "#FFF3D6", "card": "#191108", "border": "#2D1E10", "accent": "#FBBF24", "accent2": "#93C5FD"},
-    ),
-    PainterStyle(
-        key="studio_minimal",
-        name_en="Studio Minimal (Bonus)",
-        name_zh="工作室極簡（加碼）",
-        description="Ultra-clean layout, strong readability, subtle borders.",
-        palette_light={"bg": "#F9FAFB", "fg": "#111827", "card": "#FFFFFF", "border": "#E5E7EB", "accent": "#2563EB", "accent2": "#10B981"},
-        palette_dark={"bg": "#0B1220", "fg": "#E5E7EB", "card": "#0F1A2E", "border": "#1C2B4A", "accent": "#60A5FA", "accent2": "#34D399"},
-    ),
+    PainterStyle("vangogh", "Vincent van Gogh", "梵谷", "Bold strokes, starry accents, warmth.",
+                 {"bg": "#FBF6EA", "fg": "#1A1A1A", "card": "#FFFFFF", "border": "#E8DCC2", "accent": "#2A6F97", "accent2": "#FCA311"},
+                 {"bg": "#0B1320", "fg": "#EDEDED", "card": "#121B2B", "border": "#1E2A44", "accent": "#2A9D8F", "accent2": "#F4D35E"}),
+    PainterStyle("monet", "Claude Monet", "莫內", "Soft gradients, calm spacing.",
+                 {"bg": "#F4FAFB", "fg": "#14213D", "card": "#FFFFFF", "border": "#D7EEF2", "accent": "#277DA1", "accent2": "#90BE6D"},
+                 {"bg": "#09151A", "fg": "#EAF6F7", "card": "#0F222A", "border": "#183642", "accent": "#4D96FF", "accent2": "#6BCB77"}),
+    PainterStyle("picasso", "Pablo Picasso", "畢卡索", "Geometric rhythm, bold blocks.",
+                 {"bg": "#FAFAFA", "fg": "#111827", "card": "#FFFFFF", "border": "#E5E7EB", "accent": "#2563EB", "accent2": "#F59E0B"},
+                 {"bg": "#0B0F19", "fg": "#F3F4F6", "card": "#101827", "border": "#1F2937", "accent": "#60A5FA", "accent2": "#FBBF24"}),
+    PainterStyle("dali", "Salvador Dalí", "達利", "Surreal shimmer, dramatic contrast.",
+                 {"bg": "#FFF7ED", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FED7AA", "accent": "#7C3AED", "accent2": "#EF4444"},
+                 {"bg": "#120B1C", "fg": "#F5F3FF", "card": "#1A1028", "border": "#2B1B3E", "accent": "#A78BFA", "accent2": "#FB7185"}),
+    PainterStyle("davinci", "Leonardo da Vinci", "達文西", "Renaissance restraint, parchment warmth.",
+                 {"bg": "#FBF3E4", "fg": "#2B2B2B", "card": "#FFFFFF", "border": "#E7D2B1", "accent": "#6B4F2A", "accent2": "#2F6F6D"},
+                 {"bg": "#17120A", "fg": "#F3E9D7", "card": "#1E170D", "border": "#2D2214", "accent": "#D4A373", "accent2": "#4D908E"}),
+    PainterStyle("michelangelo", "Michelangelo", "米開朗基羅", "Sculptural clarity, marble neutrals.",
+                 {"bg": "#F7F7F7", "fg": "#111111", "card": "#FFFFFF", "border": "#E2E2E2", "accent": "#374151", "accent2": "#B91C1C"},
+                 {"bg": "#0D0F12", "fg": "#F5F5F5", "card": "#141820", "border": "#222833", "accent": "#9CA3AF", "accent2": "#F87171"}),
+    PainterStyle("rembrandt", "Rembrandt", "林布蘭", "Chiaroscuro depth, gold highlights.",
+                 {"bg": "#FFF8E7", "fg": "#1C1917", "card": "#FFFFFF", "border": "#E7D6B7", "accent": "#92400E", "accent2": "#0F766E"},
+                 {"bg": "#0E0B07", "fg": "#F5EBDD", "card": "#15100B", "border": "#2A1D12", "accent": "#F59E0B", "accent2": "#2DD4BF"}),
+    PainterStyle("vermeer", "Johannes Vermeer", "維梅爾", "Quiet luminosity, Delft blues.",
+                 {"bg": "#F2F6FF", "fg": "#0F172A", "card": "#FFFFFF", "border": "#DDE6F7", "accent": "#1D4ED8", "accent2": "#EAB308"},
+                 {"bg": "#0A1022", "fg": "#E8EEFF", "card": "#0F1935", "border": "#1A2A57", "accent": "#60A5FA", "accent2": "#FDE047"}),
+    PainterStyle("klimt", "Gustav Klimt", "克林姆", "Gold ornament, art-nouveau glow.",
+                 {"bg": "#FFFBEB", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FDE68A", "accent": "#B45309", "accent2": "#7C3AED"},
+                 {"bg": "#130F07", "fg": "#FFF7D6", "card": "#1B150B", "border": "#3B2F16", "accent": "#FBBF24", "accent2": "#C4B5FD"}),
+    PainterStyle("kandinsky", "Wassily Kandinsky", "康丁斯基", "Abstract energy, vibrant accents.",
+                 {"bg": "#F8FAFC", "fg": "#0F172A", "card": "#FFFFFF", "border": "#E2E8F0", "accent": "#EF4444", "accent2": "#3B82F6"},
+                 {"bg": "#070B12", "fg": "#E2E8F0", "card": "#0C1220", "border": "#1C2A44", "accent": "#FB7185", "accent2": "#60A5FA"}),
+    PainterStyle("pollock", "Jackson Pollock", "波洛克", "Splatter dynamism, bold punch.",
+                 {"bg": "#FFFFFF", "fg": "#111827", "card": "#FAFAFA", "border": "#E5E7EB", "accent": "#111827", "accent2": "#10B981"},
+                 {"bg": "#050505", "fg": "#FAFAFA", "card": "#0E0E0E", "border": "#222222", "accent": "#F97316", "accent2": "#34D399"}),
+    PainterStyle("matisse", "Henri Matisse", "馬諦斯", "Fauvist blocks, warm friendly UI.",
+                 {"bg": "#FFF5F5", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FED7D7", "accent": "#E11D48", "accent2": "#2563EB"},
+                 {"bg": "#1A0B0F", "fg": "#FFE4EA", "card": "#241017", "border": "#3B1723", "accent": "#FB7185", "accent2": "#93C5FD"}),
+    PainterStyle("munch", "Edvard Munch", "孟克", "Moody tones, striking alerts.",
+                 {"bg": "#FDF2F8", "fg": "#111827", "card": "#FFFFFF", "border": "#FBCFE8", "accent": "#7F1D1D", "accent2": "#0EA5E9"},
+                 {"bg": "#12060C", "fg": "#FCE7F3", "card": "#1C0B12", "border": "#3A1226", "accent": "#F87171", "accent2": "#38BDF8"}),
+    PainterStyle("kahlo", "Frida Kahlo", "芙烈達·卡蘿", "Botanical vivid accents, confident colors.",
+                 {"bg": "#F0FDF4", "fg": "#052E16", "card": "#FFFFFF", "border": "#BBF7D0", "accent": "#16A34A", "accent2": "#DC2626"},
+                 {"bg": "#05140B", "fg": "#DCFCE7", "card": "#0A1E11", "border": "#12351F", "accent": "#4ADE80", "accent2": "#FB7185"}),
+    PainterStyle("warhol", "Andy Warhol", "安迪·沃荷", "Pop Art neon accents, crisp layout.",
+                 {"bg": "#FDF4FF", "fg": "#111827", "card": "#FFFFFF", "border": "#F5D0FE", "accent": "#A21CAF", "accent2": "#2563EB"},
+                 {"bg": "#130414", "fg": "#FAE8FF", "card": "#1F0820", "border": "#3B0F3D", "accent": "#E879F9", "accent2": "#93C5FD"}),
+    PainterStyle("hokusai", "Hokusai", "北齋", "Ukiyo-e calm, wave blues.",
+                 {"bg": "#F0F9FF", "fg": "#0F172A", "card": "#FFFFFF", "border": "#BAE6FD", "accent": "#0369A1", "accent2": "#F97316"},
+                 {"bg": "#04131C", "fg": "#E0F2FE", "card": "#071E2B", "border": "#0C3144", "accent": "#38BDF8", "accent2": "#FDBA74"}),
+    PainterStyle("qibaishi", "Qi Baishi", "齊白石", "Ink simplicity, vermilion seal accents.",
+                 {"bg": "#FFFEF7", "fg": "#111111", "card": "#FFFFFF", "border": "#EEE6D9", "accent": "#C1121F", "accent2": "#1D3557"},
+                 {"bg": "#0B0A08", "fg": "#F5F1E8", "card": "#141210", "border": "#292420", "accent": "#F87171", "accent2": "#93C5FD"}),
+    PainterStyle("zhangdaqian", "Zhang Daqian", "張大千", "Splash-ink elegance, mineral blues/greens.",
+                 {"bg": "#F6FFFE", "fg": "#0F172A", "card": "#FFFFFF", "border": "#D1FAE5", "accent": "#065F46", "accent2": "#1D4ED8"},
+                 {"bg": "#041310", "fg": "#D1FAE5", "card": "#07241D", "border": "#0E3A2F", "accent": "#34D399", "accent2": "#93C5FD"}),
+    PainterStyle("okeeffe", "Georgia O’Keeffe", "喬治亞·歐姬芙", "Modern calm, spacious composition.",
+                 {"bg": "#FFF7ED", "fg": "#111827", "card": "#FFFFFF", "border": "#FFEDD5", "accent": "#EA580C", "accent2": "#0F766E"},
+                 {"bg": "#160C05", "fg": "#FFEDD5", "card": "#1E1208", "border": "#3A210F", "accent": "#FDBA74", "accent2": "#2DD4BF"}),
+    PainterStyle("turner", "J.M.W. Turner", "透納", "Luminous haze, sunset gradients.",
+                 {"bg": "#FFFAF0", "fg": "#1F2937", "card": "#FFFFFF", "border": "#FDE2C5", "accent": "#F59E0B", "accent2": "#3B82F6"},
+                 {"bg": "#100B06", "fg": "#FFF3D6", "card": "#191108", "border": "#2D1E10", "accent": "#FBBF24", "accent2": "#93C5FD"}),
+    PainterStyle("studio_minimal", "Studio Minimal (Bonus)", "工作室極簡（加碼）", "Ultra-clean layout, strong readability.",
+                 {"bg": "#F9FAFB", "fg": "#111827", "card": "#FFFFFF", "border": "#E5E7EB", "accent": "#2563EB", "accent2": "#10B981"},
+                 {"bg": "#0B1220", "fg": "#E5E7EB", "card": "#0F1A2E", "border": "#1C2B4A", "accent": "#60A5FA", "accent2": "#34D399"}),
 ]
 
 STYLE_BY_KEY = {s.key: s for s in PAINTER_STYLES}
@@ -461,60 +353,163 @@ STYLE_BY_KEY = {s.key: s for s in PAINTER_STYLES}
 # ----------------------------
 DEFAULT_SAMPLE_MD = """# Application Form (Mock Sample)
 
-## Section A — Applicant Information
+## Section A - Applicant Information
 1. Full Name *Required*
 2. Date of Birth (MM/DD/YYYY)
 3. Email Address *Required*
 4. Phone Number
 5. Address (Street, City, State/Province, Postal Code)
 
-## Section B — Submission Details
+## Section B - Submission Details
 1. Submission Type (choose one): 510(k), PMA, De Novo
 2. Device Name *Required*
 3. Submission Date (default: today)
 
-## Section C — Declarations
+## Section C - Declarations
 - [ ] I confirm the information provided is accurate. *Required*
 - [ ] I agree to the terms and conditions.
 
-## Section D — Additional Notes
+## Section D - Additional Notes
 Provide any supporting details (multi-line).
 
-## Section E — Signature
+## Section E - Signature
 Signature Name (typed)
 Date
 """
 
 
-def ensure_sample_file():
+def ensure_file(path: str, content: str):
     try:
-        if not os.path.exists("sample.md"):
-            with open("sample.md", "w", encoding="utf-8") as f:
-                f.write(DEFAULT_SAMPLE_MD)
+        p = Path(path)
+        if not p.exists():
+            p.write_text(content, encoding="utf-8")
     except Exception:
+        # HF Spaces can be read-only in some deployments; fallback will be session-only.
         pass
 
 
-def load_sample() -> str:
-    ensure_sample_file()
+def load_file_or_default(path: str, default: str) -> str:
     try:
-        with open("sample.md", "r", encoding="utf-8") as f:
-            return f.read()
+        p = Path(path)
+        if p.exists():
+            return p.read_text(encoding="utf-8")
     except Exception:
-        return DEFAULT_SAMPLE_MD
+        pass
+    return default
 
 
 # ----------------------------
-# Spec example template
+# Unicode font support (fpdf2 requires TTF/OTF)
 # ----------------------------
-DEFAULT_PDFSPEC_MD = """# Example PDF Build Spec (YAML)
+FONTS_DIR = Path("fonts_cache")
+FONTS_DIR.mkdir(exist_ok=True)
+
+# Lightweight Unicode for Latin punctuation (em dash, smart quotes, etc.)
+# DejaVuSans is widely compatible.
+DEJAVU_URL = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+
+# Traditional Chinese (smaller than full CJK packs). If this URL changes, update it.
+# This is a reasonably sized font for zh-TW labels.
+NOTO_TC_URL = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansTC-Regular.otf"
+
+FONT_REGISTRY = {
+    "DejaVuSans": {"path": FONTS_DIR / "DejaVuSans.ttf", "url": DEJAVU_URL},
+    "NotoSansTC": {"path": FONTS_DIR / "NotoSansTC-Regular.otf", "url": NOTO_TC_URL},
+}
+
+CJK_RE = re.compile(r"[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+
+
+def download_font_if_missing(font_key: str, timeout_s: float = 30.0) -> bool:
+    meta = FONT_REGISTRY.get(font_key)
+    if not meta:
+        return False
+    path: Path = meta["path"]
+    if path.exists() and path.stat().st_size > 100_000:
+        return True
+    url = meta["url"]
+    try:
+        with httpx.stream("GET", url, timeout=timeout_s, follow_redirects=True) as r:
+            r.raise_for_status()
+            data = b"".join(r.iter_bytes())
+        path.write_bytes(data)
+        return True
+    except Exception:
+        return False
+
+
+def ensure_unicode_fonts() -> Dict[str, Any]:
+    """
+    Ensure DejaVuSans and NotoSansTC are available.
+    Returns a status dict for UI.
+    """
+    status = {"DejaVuSans": False, "NotoSansTC": False}
+    for k in status.keys():
+        status[k] = download_font_if_missing(k)
+    status["ready"] = all(status.values())
+    return status
+
+
+def register_unicode_fonts(pdf: FPDF, render_log: List[str]) -> Dict[str, bool]:
+    """
+    Register available fonts in fpdf2. Missing fonts are skipped.
+    Returns dict {family: registered_bool}
+    """
+    reg = {}
+    for family, meta in FONT_REGISTRY.items():
+        try:
+            font_path: Path = meta["path"]
+            if font_path.exists():
+                # unicode=True is supported in fpdf2 for TTF/OTF fonts
+                pdf.add_font(family, style="", fname=str(font_path), uni=True)
+                reg[family] = True
+                render_log.append(f"Font registered: {family} -> {font_path}")
+            else:
+                reg[family] = False
+                render_log.append(f"Font missing: {family}")
+        except Exception as e:
+            reg[family] = False
+            render_log.append(f"Font register failed: {family} err={e}")
+    return reg
+
+
+def sanitize_to_latin1(text: str) -> str:
+    """
+    Last-resort fallback: replace non-latin1 characters to avoid FPDFUnicodeEncodingException.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    # Replace common punctuation first to keep readability
+    replacements = {
+        "—": "-",
+        "–": "-",
+        "•": "-",
+        "…": "...",
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "\u00A0": " ",  # NBSP
+    }
+    for a, b in replacements.items():
+        text = text.replace(a, b)
+    # Then strip anything still outside latin-1
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+# ----------------------------
+# Default PDF Spec file: defaultpdfspec.md (Unicode included)
+# ----------------------------
+DEFAULT_PDFSPEC_MD = """# Default PDF Build Spec (YAML)
+
+This default spec demonstrates Unicode labels (English punctuation + Traditional Chinese).
 
 ```yaml
 document:
-  title: "Mock Application — Fillable PDF"
-  page_size: "A4"          # A4 | LETTER
-  orientation: "portrait"  # portrait | landscape
-  unit: "mm"               # mm | pt
+  title: "申請表 — Mock Application (Unicode)"
+  page_size: "A4"
+  orientation: "portrait"
+  unit: "mm"
   margin:
     left: 12
     top: 12
@@ -522,77 +517,81 @@ document:
     bottom: 12
 fonts:
   default:
-    family: "Helvetica"
+    family: "DejaVuSans"
     size: 11
+  cjk:
+    family: "NotoSansTC"
+    size: 11
+
 pages:
   - number: 1
     elements:
       - type: "label"
-        text: "Mock Application — Fillable PDF"
+        text: "申請表 — Mock Application (Unicode)"
         x: 12
         y: 14
         size: 14
         style: "B"
 
       - type: "label"
-        text: "Applicant Information"
+        text: "Applicant Information / 申請人資料"
         x: 12
         y: 26
         size: 12
         style: "B"
 
       - type: "label"
-        text: "Full Name:"
+        text: "Full Name / 姓名:"
         x: 12
-        y: 34
+        y: 36
       - type: "field"
         field_type: "text"
         id: "full_name"
         name: "Full_Name"
-        x: 50
-        y: 31.5
+        x: 55
+        y: 33.5
         w: 140
         h: 8
         required: true
 
       - type: "label"
-        text: "Submission Type:"
+        text: "Submission Type / 送件類型:"
         x: 12
-        y: 46
+        y: 48
       - type: "field"
         field_type: "dropdown"
         id: "submission_type"
         name: "Submission_Type"
-        x: 50
-        y: 43.5
-        w: 60
+        x: 55
+        y: 45.5
+        w: 70
         h: 8
         options: ["510(k)", "PMA", "De Novo"]
 
       - type: "label"
-        text: "Confirm Accuracy:"
+        text: "Confirm Accuracy / 確認資料正確:"
         x: 12
-        y: 58
+        y: 60
       - type: "field"
         field_type: "checkbox"
         id: "confirm"
         name: "Confirm"
-        x: 50
-        y: 56
+        x: 75
+        y: 58
         w: 5
         h: 5
 
       - type: "label"
-        text: "Additional Notes:"
+        text: "Additional Notes / 補充說明:"
         x: 12
-        y: 70
+        y: 72
       - type: "field"
         field_type: "textarea"
         id: "notes"
         name: "Notes"
         x: 12
-        y: 74
-        w: 178
+        y: 76
+        w: 183
         h: 40
         multiline: true
 ```
@@ -600,7 +599,7 @@ pages:
 
 
 # ----------------------------
-# UI state initialization
+# State initialization
 # ----------------------------
 def make_default_pipeline() -> List[Dict[str, Any]]:
     return [
@@ -639,7 +638,7 @@ def make_default_pipeline() -> List[Dict[str, Any]]:
             "name": {"en": "PDF Build Specification", "zh-TW": "PDF 建置規格"},
             "model": "gemini-2.5-flash",
             "max_tokens": 12000,
-            "prompt": "Generate a PDF build spec with interactive fields (text/combo/checkbox) and styling directives (YAML preferred).",
+            "prompt": "Generate a PDF build spec (YAML). Ensure Unicode-safe labels.",
             "generated_output": "",
             "final_output": "",
             "status": "not_run",
@@ -659,46 +658,52 @@ def make_default_pipeline() -> List[Dict[str, Any]]:
 
 def init_state():
     st.session_state.setdefault("lang", "en")
-    st.session_state.setdefault("theme", "light")  # light|dark
+    st.session_state.setdefault("theme", "light")
     st.session_state.setdefault("style_key", PAINTER_STYLES[0].key)
-    st.session_state.setdefault("app_status", "idle")  # idle|running|awaiting|done|failed
+
+    st.session_state.setdefault("app_status", "idle")
     st.session_state.setdefault("last_latency_ms", None)
     st.session_state.setdefault("token_budget", 12000)
 
     st.session_state.setdefault("history", [])
-    st.session_state.setdefault("session_keys", {})  # provider -> key (session only)
+    st.session_state.setdefault("session_keys", {})
 
-    st.session_state.setdefault("form_source_mode", "default")  # default|custom
+    st.session_state.setdefault("form_source_mode", "default")
     st.session_state.setdefault("form_content", "")
 
     st.session_state.setdefault("note_content", "")
     st.session_state.setdefault("note_markdown", "")
     st.session_state.setdefault("note_persistent_prompt", "")
-    st.session_state.setdefault("note_keyword_rules", [])  # {kw,color}
+    st.session_state.setdefault("note_keyword_rules", [])
 
     st.session_state.setdefault("pipeline", make_default_pipeline())
 
-    # NEW: spec tab state
-    st.session_state.setdefault("pdfspec_text", DEFAULT_PDFSPEC_MD)
+    # Create and load defaultpdfspec.md
+    ensure_file("defaultpdfspec.md", DEFAULT_PDFSPEC_MD)
+    default_spec_loaded = load_file_or_default("defaultpdfspec.md", DEFAULT_PDFSPEC_MD)
+
+    st.session_state.setdefault("pdfspec_text", default_spec_loaded)
     st.session_state.setdefault("pdfspec_last_valid_text", "")
     st.session_state.setdefault("pdfspec_last_validation", {"errors": [], "warnings": [], "normalized": None})
     st.session_state.setdefault("pdfspec_strict_mode", False)
     st.session_state.setdefault("pdfspec_page_size_fallback", "A4")
     st.session_state.setdefault("pdfspec_unit_fallback", "mm")
 
-    # NEW: generated PDF artifacts
-    st.session_state.setdefault("pdf_bytes", None)  # latest generated PDF bytes
+    st.session_state.setdefault("pdf_bytes", None)
     st.session_state.setdefault("pdf_render_log", [])
     st.session_state.setdefault("pdf_generated_at", None)
-    st.session_state.setdefault("pdf_generated_from", None)  # "spec" or "pipeline"
+    st.session_state.setdefault("pdf_generated_from", None)
     st.session_state.setdefault("pdf_last_reconcile", None)
+
+    # Font status cached in session
+    st.session_state.setdefault("unicode_fonts_status", None)
 
 
 init_state()
 
 
 # ----------------------------
-# Helpers
+# Basic helpers
 # ----------------------------
 def set_status(new_status: str, latency_ms: Optional[int] = None):
     st.session_state.app_status = new_status
@@ -743,9 +748,7 @@ def provider_env_key(provider: str) -> Optional[str]:
 
 def provider_effective_key(provider: str) -> Optional[str]:
     env = provider_env_key(provider)
-    if env:
-        return env
-    return st.session_state.session_keys.get(provider)
+    return env if env else st.session_state.session_keys.get(provider)
 
 
 def provider_state(provider: str) -> str:
@@ -753,13 +756,15 @@ def provider_state(provider: str) -> str:
 
 
 def hash_text(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256((s or "").encode("utf-8")).hexdigest()[:12]
 
 
+# ----------------------------
+# CSS (WOW UI)
+# ----------------------------
 def css_inject():
     pal = palette()
     s = current_style()
-
     coral = "#FF7F50"
 
     css = f"""
@@ -774,103 +779,67 @@ def css_inject():
         --wow-coral: {coral};
         --wow-font: {s.font_family};
       }}
-
       html, body, [class*="stApp"] {{
         background: var(--wow-bg) !important;
         color: var(--wow-fg) !important;
         font-family: var(--wow-font) !important;
       }}
-
       section[data-testid="stSidebar"] {{
         background: linear-gradient(180deg, var(--wow-card), var(--wow-bg)) !important;
         border-right: 1px solid var(--wow-border);
       }}
-
-      .block-container {{
-        padding-top: 1.2rem;
-        padding-bottom: 2.0rem;
-      }}
-
+      .block-container {{ padding-top: 1.2rem; padding-bottom: 2rem; }}
       .wow-card {{
         background: var(--wow-card);
         border: 1px solid var(--wow-border);
         border-radius: 16px;
-        padding: 16px 16px 14px 16px;
+        padding: 16px;
         box-shadow: 0 10px 24px rgba(0,0,0,0.06);
       }}
       .wow-subtle {{ opacity: 0.85; }}
-
       .wow-pill {{
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        border: 1px solid var(--wow-border);
+        display:inline-block; padding:6px 10px; border-radius:999px;
+        border:1px solid var(--wow-border);
         background: color-mix(in srgb, var(--wow-accent) 10%, var(--wow-card));
-        color: var(--wow-fg);
-        font-size: 12px;
-        margin-right: 6px;
-        margin-top: 4px;
+        font-size:12px; margin-right:6px; margin-top:4px;
       }}
       .wow-dot {{
-        width: 10px; height: 10px; border-radius: 999px;
-        display: inline-block; margin-right: 8px;
+        width:10px; height:10px; border-radius:999px; display:inline-block; margin-right:8px;
         background: var(--wow-accent);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--wow-accent) 18%, transparent);
+        box-shadow:0 0 0 3px color-mix(in srgb, var(--wow-accent) 18%, transparent);
       }}
-
+      .wow-header {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }}
+      .wow-style-caption {{ font-size:12px; opacity:0.8; }}
+      .wow-keyword {{ color: var(--wow-coral); font-weight:700; }}
       .stButton>button {{
-        border-radius: 12px !important;
+        border-radius:12px !important;
         border: 1px solid var(--wow-border) !important;
         background: linear-gradient(180deg,
           color-mix(in srgb, var(--wow-accent) 16%, var(--wow-card)),
           color-mix(in srgb, var(--wow-accent) 8%, var(--wow-card))
         ) !important;
         color: var(--wow-fg) !important;
-        font-weight: 600;
+        font-weight:600;
       }}
-      .stButton>button:hover {{
-        border-color: color-mix(in srgb, var(--wow-accent) 55%, var(--wow-border)) !important;
-      }}
-
       .stTextInput input, .stTextArea textarea, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {{
-        border-radius: 12px !important;
-        border: 1px solid var(--wow-border) !important;
+        border-radius:12px !important;
+        border:1px solid var(--wow-border) !important;
         background: var(--wow-card) !important;
         color: var(--wow-fg) !important;
       }}
-
       details {{
         background: var(--wow-card);
-        border: 1px solid var(--wow-border);
-        border-radius: 14px;
-        padding: 4px 10px;
+        border:1px solid var(--wow-border);
+        border-radius:14px;
+        padding:4px 10px;
       }}
-
-      .wow-keyword {{
-        color: var(--wow-coral);
-        font-weight: 700;
-      }}
-
-      .wow-header {{
-        display:flex;
-        align-items:baseline;
-        justify-content:space-between;
-        gap: 12px;
-      }}
-      .wow-style-caption {{
-        font-size: 12px;
-        opacity: 0.8;
-      }}
-
       div[data-testid="stMetric"] {{
         background: var(--wow-card);
-        border: 1px solid var(--wow-border);
-        border-radius: 14px;
-        padding: 10px 12px;
+        border:1px solid var(--wow-border);
+        border-radius:14px;
+        padding:10px 12px;
       }}
-
       a {{ color: var(--wow-accent) !important; }}
-      code {{ font-size: 0.92em; }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -907,22 +876,20 @@ def sidebar_ui() -> str:
         st.markdown(f"### {t('app_title')}")
         st.caption(t("tagline"))
 
-        lang = st.selectbox(
+        st.session_state.lang = st.selectbox(
             t("ui_language"),
             options=["en", "zh-TW"],
             format_func=lambda x: "English" if x == "en" else "繁體中文",
             index=0 if st.session_state.lang == "en" else 1,
         )
-        st.session_state.lang = lang
 
-        theme = st.radio(
+        st.session_state.theme = st.radio(
             t("ui_theme"),
             options=["light", "dark"],
             format_func=lambda x: t("ui_theme_light") if x == "light" else t("ui_theme_dark"),
             horizontal=True,
             index=0 if st.session_state.theme == "light" else 1,
         )
-        st.session_state.theme = theme
 
         style_keys = [s.key for s in PAINTER_STYLES]
         st.session_state.style_key = st.selectbox(
@@ -932,12 +899,12 @@ def sidebar_ui() -> str:
             format_func=lambda k: style_display_name(STYLE_BY_KEY[k]),
         )
 
-        cols = st.columns([1, 1])
-        with cols[0]:
+        c = st.columns(2)
+        with c[0]:
             if st.button(t("ui_jackpot"), use_container_width=True):
                 st.session_state.style_key = random.choice(style_keys)
                 st.rerun()
-        with cols[1]:
+        with c[1]:
             if st.button(t("ui_reset"), use_container_width=True):
                 st.session_state.lang = "en"
                 st.session_state.theme = "light"
@@ -972,20 +939,32 @@ def sidebar_ui() -> str:
 
         st.markdown(f"**{t('providers')}:**")
         for p in ["OpenAI", "Gemini", "Anthropic", "Grok"]:
-            state = provider_state(p)
-            label = t("provider_ready") if state == "ready" else t("provider_missing")
-            st.caption(f"- {p}: {label}")
+            st.caption(f"- {p}: {t('provider_ready') if provider_state(p)=='ready' else t('provider_missing')}")
+
+        # Unicode fonts status
+        st.write("")
+        st.markdown(f"**{t('font_status')}:**")
+        fs = st.session_state.unicode_fonts_status
+        if fs is None:
+            st.caption(t("font_downloading"))
+            fs = ensure_unicode_fonts()
+            st.session_state.unicode_fonts_status = fs
+        if fs.get("ready"):
+            st.caption(f"- DejaVuSans: {t('font_ready')}")
+            st.caption(f"- NotoSansTC: {t('font_ready')}")
+        else:
+            st.caption(f"- DejaVuSans: {t('font_ready') if fs.get('DejaVuSans') else t('font_failed')}")
+            st.caption(f"- NotoSansTC: {t('font_ready') if fs.get('NotoSansTC') else t('font_failed')}")
 
         return page
 
 
 # ----------------------------
-# Pipeline (mock runner + hook to capture PDFSpec)
+# Pipeline mock runner (kept)
 # ----------------------------
 def fake_agent_run(step: Dict[str, Any], input_text: str) -> Tuple[str, int]:
     start = time.time()
     time.sleep(0.25)
-
     stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     out = (
         f"## {step['id']} (mock output)\n\n"
@@ -996,12 +975,11 @@ def fake_agent_run(step: Dict[str, Any], input_text: str) -> Tuple[str, int]:
         f"### Content\n"
         f"{input_text[:900]}\n"
     )
-    latency_ms = int((time.time() - start) * 1000)
-    return out, latency_ms
+    return out, int((time.time() - start) * 1000)
 
 
 # ----------------------------
-# Note Keeper helper
+# Note Keeper helpers (kept)
 # ----------------------------
 def highlight_keywords_html(md_text: str, keyword_rules: List[Dict[str, str]]) -> str:
     if not md_text:
@@ -1019,57 +997,46 @@ def highlight_keywords_html(md_text: str, keyword_rules: List[Dict[str, str]]) -
 
 
 def organize_note_stub(note: str) -> str:
-    note = note.strip()
+    note = (note or "").strip()
     if not note:
         return ""
     kws = sorted(set(re.findall(r"\b[A-Z][a-zA-Z]{3,}\b", note)))[:12]
-    md = []
-    md.append("# Organized Note")
-    md.append("")
-    md.append("## Key Points")
-    md.append("- " + ("\n- ".join([line.strip() for line in note.splitlines() if line.strip()][:5]) if note else "—"))
-    md.append("")
-    md.append("## Details")
-    md.append(note)
-    md.append("")
-    md.append("## Keywords")
-    if kws:
-        md.append(", ".join([f'<span class="wow-keyword">{k}</span>' for k in kws]))
-    else:
-        md.append("—")
+    md = [
+        "# Organized Note",
+        "",
+        "## Key Points",
+        "- " + ("\n- ".join([ln.strip() for ln in note.splitlines() if ln.strip()][:5]) or "—"),
+        "",
+        "## Details",
+        note,
+        "",
+        "## Keywords",
+        ", ".join([f'<span class="wow-keyword">{k}</span>' for k in kws]) if kws else "—",
+    ]
     return "\n".join(md)
 
 
 # ----------------------------
-# PDFSpec parsing/validation/generation
+# PDFSpec parse/validate/generate (Unicode-safe)
 # ----------------------------
 MM_PER_PT = 0.3527777778
 
 
 def extract_structured_block(text: str) -> Tuple[str, str]:
-    """
-    Returns (kind, payload) where kind in {"yaml","json","raw"}.
-    If markdown fenced block exists, extract it.
-    """
-    # Prefer fenced YAML/JSON blocks
     m = re.search(r"```(?:yaml|yml)\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
     if m:
         return "yaml", m.group(1).strip()
     m = re.search(r"```json\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
     if m:
         return "json", m.group(1).strip()
-    return "raw", text.strip()
+    return "raw", (text or "").strip()
 
 
 def parse_pdfspec(text: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """
-    Parse text into dict. Tries YAML then JSON.
-    Returns (spec_dict, errors)
-    """
     kind, payload = extract_structured_block(text)
-    errors = []
     if not payload:
         return None, ["Spec is empty."]
+    errors = []
     if kind in ("yaml", "raw"):
         try:
             obj = yaml.safe_load(payload)
@@ -1084,16 +1051,10 @@ def parse_pdfspec(text: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
                 return obj, []
         except Exception as e:
             errors.append(f"JSON parse error: {e}")
-    if not errors:
-        errors = ["Parsed content is not a dictionary/object."]
-    return None, errors
+    return None, errors or ["Parsed content is not an object/dict."]
 
 
 def normalize_units_in_place(spec: Dict[str, Any], target_unit: str) -> Tuple[List[str], List[str]]:
-    """
-    Normalize all x/y/w/h and margins into target_unit (mm recommended for fpdf2 here).
-    Returns (warnings, errors)
-    """
     warnings, errors = [], []
     doc = spec.get("document", {}) or {}
     unit = (doc.get("unit") or target_unit or "mm").lower()
@@ -1111,42 +1072,32 @@ def normalize_units_in_place(spec: Dict[str, Any], target_unit: str) -> Tuple[Li
                 return float(v) / MM_PER_PT
         return v
 
-    # Convert margins
     margin = doc.get("margin") or {}
     if isinstance(margin, dict):
         for k in ("left", "top", "right", "bottom"):
             if k in margin:
                 margin[k] = convert(margin[k])
 
-    # Convert element geometry
     pages = spec.get("pages")
-    if not isinstance(pages, list):
-        return warnings, errors
-    for p in pages:
-        elements = (p or {}).get("elements")
-        if not isinstance(elements, list):
-            continue
-        for el in elements:
-            if not isinstance(el, dict):
+    if isinstance(pages, list):
+        for p in pages:
+            elements = (p or {}).get("elements")
+            if not isinstance(elements, list):
                 continue
-            for k in ("x", "y", "w", "h"):
-                if k in el:
-                    el[k] = convert(el[k])
+            for el in elements:
+                if not isinstance(el, dict):
+                    continue
+                for k in ("x", "y", "w", "h"):
+                    if k in el:
+                        el[k] = convert(el[k])
 
-    # Write normalized unit
     doc["unit"] = target_unit
     spec["document"] = doc
     return warnings, errors
 
 
 def validate_pdfspec(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Returns report dict:
-      { errors:[], warnings:[], normalized: spec_norm, field_stats:{...} }
-    """
-    errors: List[str] = []
-    warnings: List[str] = []
-
+    errors, warnings = [], []
     if not isinstance(spec, dict):
         return {"errors": ["Spec is not an object."], "warnings": [], "normalized": None}
 
@@ -1167,34 +1118,25 @@ def validate_pdfspec(spec: Dict[str, Any]) -> Dict[str, Any]:
         orientation = "portrait"
     doc["orientation"] = orientation
 
-    # Normalize to mm for generation
     norm_unit = (st.session_state.pdfspec_unit_fallback or "mm").lower()
     if norm_unit not in ("mm", "pt"):
         norm_unit = "mm"
 
-    spec_norm = json.loads(json.dumps(spec))  # deep copy
+    spec_norm = json.loads(json.dumps(spec))
     spec_norm.setdefault("document", {})
     spec_norm["document"].update(doc)
 
-    unit_warnings, unit_errors = normalize_units_in_place(spec_norm, target_unit=norm_unit)
-    warnings.extend(unit_warnings)
-    errors.extend(unit_errors)
-
-    fonts = spec_norm.get("fonts") or {}
-    if not isinstance(fonts, dict):
-        warnings.append("Invalid 'fonts' object; using defaults.")
-        fonts = {}
-        spec_norm["fonts"] = fonts
+    w2, e2 = normalize_units_in_place(spec_norm, target_unit=norm_unit)
+    warnings.extend(w2)
+    errors.extend(e2)
 
     pages = spec_norm.get("pages")
     if not isinstance(pages, list) or not pages:
         errors.append("Missing or empty 'pages' array.")
         return {"errors": errors, "warnings": warnings, "normalized": None}
 
-    # Validate elements + fields
     field_ids = set()
-    field_count = {"text": 0, "textarea": 0, "checkbox": 0, "dropdown": 0, "radio": 0, "unknown": 0}
-    min_field_w, min_field_h = 6.0, 4.0
+    counts = {"text": 0, "textarea": 0, "checkbox": 0, "dropdown": 0, "radio": 0, "unknown": 0}
 
     for pi, p in enumerate(pages, start=1):
         if not isinstance(p, dict):
@@ -1202,88 +1144,53 @@ def validate_pdfspec(spec: Dict[str, Any]) -> Dict[str, Any]:
             continue
         elements = p.get("elements")
         if not isinstance(elements, list):
-            errors.append(f"Page {pi}: missing or invalid 'elements' array.")
+            errors.append(f"Page {pi}: missing/invalid 'elements' array.")
             continue
+
         for ei, el in enumerate(elements, start=1):
             if not isinstance(el, dict):
-                warnings.append(f"Page {pi} element {ei}: not an object; skipped.")
                 continue
             et = (el.get("type") or "").lower()
             if et not in ("label", "field"):
                 warnings.append(f"Page {pi} element {ei}: unknown type '{el.get('type')}'.")
                 continue
 
-            # Geometry checks
-            for k in ("x", "y"):
-                if k not in el or not isinstance(el[k], (int, float)):
-                    errors.append(f"Page {pi} element {ei}: missing numeric '{k}'.")
-            if et == "field":
+            if "x" not in el or "y" not in el or not isinstance(el.get("x"), (int, float)) or not isinstance(el.get("y"), (int, float)):
+                errors.append(f"Page {pi} element {ei}: missing numeric x/y.")
+
+            if et == "label":
+                if not isinstance(el.get("text"), str) or not el.get("text"):
+                    warnings.append(f"Page {pi} label {ei}: missing text.")
+            else:
                 for k in ("w", "h"):
-                    if k not in el or not isinstance(el[k], (int, float)):
-                        errors.append(f"Page {pi} field element {ei}: missing numeric '{k}'.")
-                if all(isinstance(el.get(k), (int, float)) for k in ("w", "h")):
-                    if el["w"] < min_field_w or el["h"] < min_field_h:
-                        warnings.append(f"Page {pi} field '{el.get('id','?')}' too small (w/h).")
+                    if k not in el or not isinstance(el.get(k), (int, float)):
+                        errors.append(f"Page {pi} field {ei}: missing numeric {k}.")
 
                 fid = el.get("id")
-                if not fid or not isinstance(fid, str):
-                    errors.append(f"Page {pi} field element {ei}: missing string 'id'.")
+                if not isinstance(fid, str) or not fid.strip():
+                    errors.append(f"Page {pi} field {ei}: missing string id.")
                 else:
                     if fid in field_ids:
                         errors.append(f"Duplicate field id '{fid}'.")
                     field_ids.add(fid)
 
                 ftype = (el.get("field_type") or "").lower()
-                if ftype in ("text", "textarea", "checkbox", "dropdown", "radio"):
-                    field_count[ftype] += 1
+                if ftype in counts:
+                    counts[ftype] += 1
                 else:
-                    field_count["unknown"] += 1
-                    warnings.append(f"Field '{fid}': unsupported field_type '{ftype}' (will attempt fallback).")
+                    counts["unknown"] += 1
+                    warnings.append(f"Field '{fid}': unsupported field_type '{ftype}' (fallback).")
 
                 if ftype in ("dropdown", "radio"):
                     opts = el.get("options")
                     if not isinstance(opts, list) or not opts:
-                        errors.append(f"Field '{fid}': '{ftype}' requires non-empty 'options' array.")
-
-                # Name is recommended (AcroForm field name); fallback allowed
-                nm = el.get("name")
-                if nm is not None and not isinstance(nm, str):
-                    warnings.append(f"Field '{fid}': 'name' should be a string.")
-
-            if et == "label":
-                if not isinstance(el.get("text"), str) or not el.get("text"):
-                    warnings.append(f"Page {pi} label element {ei}: missing 'text'.")
-
-    # Optional overlap sanity check (very lightweight)
-    # Only checks fields vs fields on same page
-    for pi, p in enumerate(pages, start=1):
-        elements = p.get("elements") if isinstance(p, dict) else None
-        if not isinstance(elements, list):
-            continue
-        fields = [el for el in elements if isinstance(el, dict) and (el.get("type") or "").lower() == "field"]
-        for i in range(len(fields)):
-            a = fields[i]
-            if not all(isinstance(a.get(k), (int, float)) for k in ("x", "y", "w", "h")):
-                continue
-            ax1, ay1, ax2, ay2 = a["x"], a["y"], a["x"] + a["w"], a["y"] + a["h"]
-            for j in range(i + 1, len(fields)):
-                b = fields[j]
-                if not all(isinstance(b.get(k), (int, float)) for k in ("x", "y", "w", "h")):
-                    continue
-                bx1, by1, bx2, by2 = b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]
-                overlap = not (ax2 <= bx1 or bx2 <= ax1 or ay2 <= by1 or by2 <= ay1)
-                if overlap:
-                    warnings.append(f"Page {pi}: fields '{a.get('id','?')}' and '{b.get('id','?')}' overlap.")
+                        errors.append(f"Field '{fid}': '{ftype}' requires non-empty options.")
 
     return {
         "errors": errors,
         "warnings": warnings,
         "normalized": spec_norm,
-        "field_stats": {
-            "total": sum(field_count.values()) - field_count["unknown"] + field_count["unknown"],
-            "by_type": field_count,
-            "unique_ids": len(field_ids),
-        },
+        "field_stats": {"total": sum(counts.values()), "by_type": counts, "unique_ids": len(field_ids)},
     }
 
 
@@ -1293,49 +1200,89 @@ def page_format_for_fpdf(page_size: str, orientation: str) -> Tuple[str, str]:
     return fmt, orient
 
 
+def choose_font_for_text(text: str, font_default: str, font_cjk: str, fonts_registered: Dict[str, bool]) -> str:
+    """
+    If text contains CJK, use cjk font (if registered), else default font.
+    """
+    if isinstance(text, str) and CJK_RE.search(text):
+        if fonts_registered.get(font_cjk):
+            return font_cjk
+    if fonts_registered.get(font_default):
+        return font_default
+    # If none registered, return a core font to keep PDF generation alive (but text must be sanitized)
+    return "Helvetica"
+
+
 def pdfspec_to_pdf_bytes(spec_norm: Dict[str, Any]) -> Tuple[bytes, List[str]]:
     """
-    Generate fillable PDF via fpdf2 from normalized spec (assumed mm unit).
-    Returns (pdf_bytes, render_log)
+    Generate fillable PDF via fpdf2 from normalized spec (mm unit).
+    Unicode-safe: registers TTF/OTF fonts and selects CJK font for CJK text.
     """
-    log: List[str] = []
+    render_log: List[str] = []
+
     doc = spec_norm.get("document") or {}
     page_size = (doc.get("page_size") or "A4").upper()
     orientation = (doc.get("orientation") or "portrait").lower()
-
     fmt, orient = page_format_for_fpdf(page_size, orientation)
 
-    fonts = (spec_norm.get("fonts") or {}).get("default") or {}
-    family = fonts.get("family") or "Helvetica"
-    base_size = float(fonts.get("size") or 11)
+    fonts_cfg = spec_norm.get("fonts") or {}
+    default_font_cfg = (fonts_cfg.get("default") or {}) if isinstance(fonts_cfg, dict) else {}
+    cjk_font_cfg = (fonts_cfg.get("cjk") or {}) if isinstance(fonts_cfg, dict) else {}
+
+    default_family = str(default_font_cfg.get("family") or "DejaVuSans")
+    cjk_family = str(cjk_font_cfg.get("family") or "NotoSansTC")
+    base_size = float(default_font_cfg.get("size") or 11.0)
 
     pdf = FPDF(orientation=orient, unit="mm", format=fmt)
     pdf.set_auto_page_break(auto=False)
 
+    # Ensure fonts available (download if needed)
+    fs = st.session_state.unicode_fonts_status
+    if fs is None:
+        fs = ensure_unicode_fonts()
+        st.session_state.unicode_fonts_status = fs
+
+    fonts_registered = register_unicode_fonts(pdf, render_log)
+
     pages = spec_norm.get("pages") or []
     for p in pages:
         pdf.add_page()
-        pdf.set_font(family, size=base_size)
+
         elements = (p or {}).get("elements") or []
         for el in elements:
             if not isinstance(el, dict):
                 continue
             et = (el.get("type") or "").lower()
+
             if et == "label":
-                txt = str(el.get("text") or "")
+                raw_txt = el.get("text") or ""
+                txt = str(raw_txt)
+
+                # Choose font per text
+                family = choose_font_for_text(txt, default_family, cjk_family, fonts_registered)
+
+                # If fonts not registered, sanitize to latin1 to avoid crash
+                if family == "Helvetica" and not fonts_registered.get(default_family) and not fonts_registered.get(cjk_family):
+                    txt = sanitize_to_latin1(txt)
+                    render_log.append("Sanitized label text to latin-1 due to missing Unicode fonts.")
+
                 x = float(el.get("x") or 0)
                 y = float(el.get("y") or 0)
                 size = float(el.get("size") or base_size)
-                style = (el.get("style") or "").upper()  # "B", "I", "BI", etc.
+                style = (el.get("style") or "").upper()
+
+                # With TTF fonts, style variants (B/I) require separate font files; we fall back to regular if unsupported.
                 try:
                     pdf.set_font(family, style=style, size=size)
                 except Exception:
                     pdf.set_font(family, size=size)
+                    if style:
+                        render_log.append(f"Style '{style}' not available for {family}; fell back to regular.")
+
                 pdf.set_xy(x, y)
-                # Using multi_cell for long labels
                 pdf.multi_cell(w=0, h=5, text=txt)
-                pdf.set_font(family, size=base_size)
-                log.append(f"Label: '{txt[:40]}' @ ({x},{y})")
+                render_log.append(f"Label: '{txt[:60]}' font={family} @ ({x},{y})")
+
             elif et == "field":
                 fid = str(el.get("id") or "")
                 ftype = (el.get("field_type") or "text").lower()
@@ -1347,7 +1294,6 @@ def pdfspec_to_pdf_bytes(spec_norm: Dict[str, Any]) -> Tuple[bytes, List[str]]:
                 value = el.get("value")
                 multiline = bool(el.get("multiline") or ftype == "textarea")
 
-                # fpdf2 form helpers (may vary by version; keep fallbacks)
                 try:
                     if ftype in ("text", "textarea"):
                         kwargs = {}
@@ -1356,33 +1302,37 @@ def pdfspec_to_pdf_bytes(spec_norm: Dict[str, Any]) -> Tuple[bytes, List[str]]:
                         if multiline:
                             kwargs["multiline"] = True
                         pdf.form_text(name=str(name), x=x, y=y, w=w, h=h, **kwargs)
-                        log.append(f"Field(text): {fid} name={name} @ ({x},{y}) {w}x{h} multiline={multiline}")
+                        render_log.append(f"Field(text): {fid} name={name} @ ({x},{y}) {w}x{h} multiline={multiline}")
+
                     elif ftype in ("dropdown", "combo"):
                         options = el.get("options") or []
                         pdf.form_combo(name=str(name), x=x, y=y, w=w, h=h, options=[str(o) for o in options])
-                        log.append(f"Field(dropdown): {fid} opts={len(options)} @ ({x},{y}) {w}x{h}")
+                        render_log.append(f"Field(dropdown): {fid} opts={len(options)} @ ({x},{y}) {w}x{h}")
+
                     elif ftype == "checkbox":
                         pdf.form_checkbox(name=str(name), x=x, y=y, w=w, h=h)
-                        log.append(f"Field(checkbox): {fid} @ ({x},{y}) {w}x{h}")
+                        render_log.append(f"Field(checkbox): {fid} @ ({x},{y}) {w}x{h}")
+
                     else:
-                        # Fallback: render as text field
+                        # fallback to text
                         pdf.form_text(name=str(name), x=x, y=y, w=w, h=h, value=str(value) if value else "")
-                        log.append(f"Field(fallback->text): {fid} unsupported type '{ftype}'")
+                        render_log.append(f"Field(fallback->text): {fid} unsupported type '{ftype}'")
+
                 except Exception as e:
-                    # Hard fallback: draw a rectangle placeholder (non-interactive) but keep log
+                    # Hard fallback: draw placeholder
                     pdf.set_draw_color(120, 120, 120)
                     pdf.rect(x, y, w, h)
+                    placeholder = f"[{ftype}] {name}"
+                    placeholder = sanitize_to_latin1(placeholder)
                     pdf.set_xy(x + 1.5, y + 1.5)
-                    pdf.set_font(family, size=base_size - 1)
-                    pdf.cell(w=w - 3, h=h - 3, text=f"[{ftype}] {name}", border=0)
-                    pdf.set_font(family, size=base_size)
-                    log.append(f"Field(render-failed): {fid} type={ftype} err={e}")
+                    pdf.set_font("Helvetica", size=max(8, int(base_size - 1)))
+                    pdf.cell(w=w - 3, h=h - 3, text=placeholder, border=0)
+                    render_log.append(f"Field(render-failed): {fid} type={ftype} err={e}")
 
-    # Return bytes
     out = pdf.output(dest="S")
     if isinstance(out, (bytes, bytearray)):
-        return bytes(out), log
-    return out.encode("latin-1"), log
+        return bytes(out), render_log
+    return out.encode("latin-1"), render_log
 
 
 def pdf_iframe_view(pdf_bytes: bytes, height: int = 720) -> str:
@@ -1398,17 +1348,12 @@ def pdf_iframe_view(pdf_bytes: bytes, height: int = 720) -> str:
 
 
 def extract_pdf_fields(pdf_bytes: bytes) -> Dict[str, Any]:
-    """
-    Best-effort extraction of AcroForm fields from an uploaded PDF using pypdf.
-    Returns { fields: {name:{...}}, names:[...], raw_count:n }
-    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     fields = reader.get_fields() or {}
     out_fields = {}
     for k, v in fields.items():
         info = {}
         try:
-            # common keys: /FT (field type), /T (name), /V (value)
             info["ft"] = str(v.get("/FT", "")) if isinstance(v, dict) else ""
             info["t"] = str(v.get("/T", "")) if isinstance(v, dict) else ""
             info["v"] = str(v.get("/V", "")) if isinstance(v, dict) else ""
@@ -1432,14 +1377,11 @@ def spec_field_names(spec_norm: Dict[str, Any]) -> List[str]:
             nm = el.get("name") or fid
             if nm:
                 names.append(str(nm))
-    # preserve order but dedupe
-    seen = set()
-    ordered = []
+    seen, ordered = set(), []
     for n in names:
-        if n in seen:
-            continue
-        seen.add(n)
-        ordered.append(n)
+        if n not in seen:
+            seen.add(n)
+            ordered.append(n)
     return ordered
 
 
@@ -1452,7 +1394,6 @@ def reconcile_pdf_vs_spec(spec_norm: Dict[str, Any], uploaded_pdf_bytes: bytes) 
     missing_in_pdf = sorted(spec_names - pdf_names)
     extra_in_pdf = sorted(pdf_names - spec_names)
 
-    # Heuristic rename suggestions (very simple)
     suggestions = []
     for sname in missing_in_pdf[:40]:
         sslug = re.sub(r"[^a-z0-9]+", "", sname.lower())
@@ -1481,13 +1422,11 @@ def reconcile_pdf_vs_spec(spec_norm: Dict[str, Any], uploaded_pdf_bytes: bytes) 
 def page_dashboard():
     wow_header(t("nav_dashboard"), t("dash_overview"))
 
-    # Top metrics
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric(t("ui_status"), status_label(st.session_state.app_status))
     with c2:
-        latency = st.session_state.last_latency_ms
-        st.metric(t("dash_latency"), f"{latency} ms" if latency is not None else "—")
+        st.metric(t("dash_latency"), f"{st.session_state.last_latency_ms} ms" if st.session_state.last_latency_ms is not None else "—")
     with c3:
         st.metric(t("dash_tokens"), str(st.session_state.token_budget))
     with c4:
@@ -1495,31 +1434,16 @@ def page_dashboard():
 
     st.write("")
 
-    providers = ["OpenAI", "Gemini", "Anthropic", "Grok"]
-    st.markdown(f"#### {t('providers')}")
-    cols = st.columns(4)
-    for i, p in enumerate(providers):
-        with cols[i]:
-            state = provider_state(p)
-            if state == "ready":
-                st.success(f"{p}: {t('provider_ready')}")
-            else:
-                st.warning(f"{p}: {t('provider_missing')}")
-
-    st.write("")
-
     left, right = st.columns([1.2, 1])
     with left:
         st.markdown(f"#### {t('dash_recent')}")
-        last_pdf = st.session_state.pdf_generated_at
-        last_src = st.session_state.pdf_generated_from
         st.markdown(
             f"""
             <div class="wow-card">
               <div class="wow-subtle">
-                • Input hash: <code>{hash_text(st.session_state.form_content or '')}</code><br/>
-                • Last PDF: <b>{last_pdf or '—'}</b><br/>
-                • Source: <b>{last_src or '—'}</b><br/>
+                • Input hash: <code>{hash_text(st.session_state.form_content)}</code><br/>
+                • Last PDF: <b>{st.session_state.pdf_generated_at or "—"}</b><br/>
+                • Source: <b>{st.session_state.pdf_generated_from or "—"}</b><br/>
               </div>
             </div>
             """,
@@ -1529,15 +1453,13 @@ def page_dashboard():
         st.markdown(f"#### {t('dash_pipeline_health')}")
         ok = sum(1 for s in st.session_state.pipeline if s["status"] in ("done", "accepted"))
         total = len(st.session_state.pipeline)
-        readiness = min(100, 40 + ok * 12)
         pdf_ready = "Yes" if st.session_state.pdf_bytes else "No"
         st.markdown(
             f"""
             <div class="wow-card">
               <div class="wow-subtle">
                 Steps completed: <b>{ok}/{total}</b><br/>
-                {t('dash_pdf_ready')}: <b>{pdf_ready}</b><br/>
-                Readiness score: <b>{readiness}%</b>
+                {t('dash_pdf_ready')}: <b>{pdf_ready}</b>
               </div>
             </div>
             """,
@@ -1546,7 +1468,8 @@ def page_dashboard():
 
     st.write("")
     st.markdown(f"#### {t('dash_field_stats')}")
-    stats = st.session_state.pdfspec_last_validation.get("field_stats") if isinstance(st.session_state.pdfspec_last_validation, dict) else None
+    rep = st.session_state.pdfspec_last_validation
+    stats = rep.get("field_stats") if isinstance(rep, dict) else None
     if stats:
         by = stats.get("by_type", {})
         st.markdown(
@@ -1554,9 +1477,9 @@ def page_dashboard():
             <div class="wow-card">
               <div class="wow-subtle">
                 Detected fields: <b>{stats.get('total','—')}</b><br/>
-                Text: <b>{by.get('text',0)}</b> &nbsp;&nbsp;
-                Textarea: <b>{by.get('textarea',0)}</b> &nbsp;&nbsp;
-                Dropdown: <b>{by.get('dropdown',0)}</b> &nbsp;&nbsp;
+                Text: <b>{by.get('text',0)}</b> &nbsp;
+                Textarea: <b>{by.get('textarea',0)}</b> &nbsp;
+                Dropdown: <b>{by.get('dropdown',0)}</b> &nbsp;
                 Checkbox: <b>{by.get('checkbox',0)}</b><br/>
                 Unique IDs: <b>{stats.get('unique_ids','—')}</b>
               </div>
@@ -1570,7 +1493,7 @@ def page_dashboard():
             <div class="wow-card">
               <div class="wow-subtle">
                 Detected fields: —<br/>
-                (Generate/validate a PDFSpec to populate stats.)
+                (Validate/generate a PDFSpec to populate stats.)
               </div>
             </div>
             """,
@@ -1592,8 +1515,9 @@ def page_form():
     st.session_state.form_source_mode = mode
 
     if mode == "default":
-        if st.session_state.form_content.strip() == "":
-            st.session_state.form_content = load_sample()
+        if not st.session_state.form_content.strip():
+            ensure_file("sample.md", DEFAULT_SAMPLE_MD)
+            st.session_state.form_content = load_file_or_default("sample.md", DEFAULT_SAMPLE_MD)
         st.info(t("form_use_default"))
     else:
         tab_paste, tab_upload = st.tabs([t("form_paste"), t("form_upload")])
@@ -1606,18 +1530,14 @@ def page_form():
                 raw = up.read()
                 text = ""
                 if name.endswith(".txt") or name.endswith(".md"):
-                    try:
-                        text = raw.decode("utf-8", errors="replace")
-                    except Exception:
-                        text = raw.decode(errors="replace")
+                    text = raw.decode("utf-8", errors="replace")
                 elif name.endswith(".docx"):
                     try:
-                        import docx  # python-docx
+                        import docx
                         doc = docx.Document(io.BytesIO(raw))
-                        parts = [para.text for para in doc.paragraphs]
-                        text = "\n".join(parts).strip()
+                        text = "\n".join([p.text for p in doc.paragraphs]).strip()
                     except Exception:
-                        st.error("DOCX parsing requires `python-docx`. Upload .md/.txt or add dependency.")
+                        st.error("DOCX parsing requires `python-docx`.")
                 if text:
                     st.session_state.form_content = text
                     st.success("Uploaded and loaded.")
@@ -1638,34 +1558,6 @@ def page_pipeline():
     if not st.session_state.form_content.strip():
         st.warning("No form content loaded yet. Go to ‘Form → Dynamic PDF’ first.")
         return
-
-    top = st.columns([1.2, 1, 1, 1])
-    with top[0]:
-        st.markdown(
-            f"""
-            <div class="wow-card">
-              <div class="wow-subtle">
-                <b>Input</b>: {('sample.md' if st.session_state.form_source_mode=='default' else 'custom form')}<br/>
-                <b>Content hash</b>: <code>{hash_text(st.session_state.form_content)}</code>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with top[1]:
-        st.session_state.token_budget = st.number_input(
-            t("pipeline_max_tokens"), min_value=256, max_value=200000, value=int(st.session_state.token_budget), step=256
-        )
-    with top[2]:
-        if st.button("Mark Running", use_container_width=True):
-            set_status("running")
-            st.rerun()
-    with top[3]:
-        if st.button("Mark Idle", use_container_width=True):
-            set_status("idle")
-            st.rerun()
-
-    st.write("")
 
     MODELS = [
         "gpt-4o-mini",
@@ -1705,8 +1597,8 @@ def page_pipeline():
                     key=f"prompt_{step['id']}",
                 )
 
-                btns = st.columns([1, 1, 1])
-                with btns[0]:
+                b = st.columns(3)
+                with b[0]:
                     if st.button(t("pipeline_run_step"), key=f"run_{step['id']}", use_container_width=True):
                         set_status("running")
                         if idx == 0:
@@ -1714,15 +1606,13 @@ def page_pipeline():
                         else:
                             prev = st.session_state.pipeline[idx - 1]
                             input_text = prev["final_output"] or prev["generated_output"] or st.session_state.form_content
-
-                        out, latency_ms = fake_agent_run(step, input_text)
+                        out, lat = fake_agent_run(step, input_text)
                         step["generated_output"] = out
                         step["final_output"] = step["final_output"] or out
                         step["status"] = "done"
-                        set_status("awaiting", latency_ms=latency_ms)
+                        set_status("awaiting", latency_ms=lat)
                         st.rerun()
-
-                with btns[1]:
+                with b[1]:
                     if st.button(t("pipeline_run_from_here"), key=f"run_from_{step['id']}", use_container_width=True):
                         set_status("running")
                         input_text = st.session_state.form_content if idx == 0 else (
@@ -1730,7 +1620,7 @@ def page_pipeline():
                             or st.session_state.pipeline[idx - 1]["generated_output"]
                             or st.session_state.form_content
                         )
-                        total_latency = 0
+                        total = 0
                         for j in range(idx, len(st.session_state.pipeline)):
                             stp = st.session_state.pipeline[j]
                             out, lat = fake_agent_run(stp, input_text)
@@ -1738,11 +1628,10 @@ def page_pipeline():
                             stp["final_output"] = stp["final_output"] or out
                             stp["status"] = "done"
                             input_text = stp["final_output"]
-                            total_latency += lat
-                        set_status("awaiting", latency_ms=total_latency)
+                            total += lat
+                        set_status("awaiting", latency_ms=total)
                         st.rerun()
-
-                with btns[2]:
+                with b[2]:
                     if st.button(t("pipeline_reset_output"), key=f"reset_{step['id']}", use_container_width=True):
                         step["final_output"] = step.get("generated_output", "")
                         st.rerun()
@@ -1756,32 +1645,26 @@ def page_pipeline():
                     key=f"view_{step['id']}",
                     label_visibility="collapsed",
                 )
-
                 step["final_output"] = st.text_area(
                     t("pipeline_output"),
                     value=step.get("final_output", ""),
                     height=280,
                     key=f"output_{step['id']}",
                 )
-
                 if st.button(t("pipeline_accept"), key=f"accept_{step['id']}", use_container_width=True):
                     step["status"] = "accepted"
-
-                    # Hook: if this is the PDFSpec step, capture it for the Spec tab.
                     if step["id"] == "pdf_spec":
                         st.session_state.pdfspec_text = step["final_output"] or st.session_state.pdfspec_text
-
                     set_status("awaiting")
                     st.rerun()
 
                 if view == "md" and step["final_output"].strip():
                     st.markdown("---")
-                    st.markdown("**Rendered Markdown Preview**")
                     st.markdown(step["final_output"])
 
 
 def page_spec_to_pdf():
-    wow_header(t("nav_spec"), t("spec_subtitle"))
+    wow_header(t("spec_title"), t("spec_subtitle"))
 
     left, right = st.columns([1.1, 1])
 
@@ -1789,31 +1672,24 @@ def page_spec_to_pdf():
         st.markdown(f"#### {t('spec_source')}")
         source = st.radio(
             "",
-            options=["use_last", "paste_new", "load_example"],
+            options=["use_last", "paste_new", "load_default"],
             horizontal=True,
             format_func=lambda x: {
                 "use_last": t("spec_use_last"),
                 "paste_new": t("spec_paste_new"),
-                "load_example": t("spec_load_example"),
+                "load_default": t("spec_load_default"),
             }[x],
             label_visibility="collapsed",
         )
 
-        if source == "use_last":
-            if st.session_state.pdfspec_last_valid_text.strip():
-                st.session_state.pdfspec_text = st.session_state.pdfspec_last_valid_text
-            else:
-                st.info(t("spec_no_last_spec"))
-        elif source == "load_example":
-            st.session_state.pdfspec_text = DEFAULT_PDFSPEC_MD
+        if source == "use_last" and st.session_state.pdfspec_last_valid_text.strip():
+            st.session_state.pdfspec_text = st.session_state.pdfspec_last_valid_text
+        elif source == "load_default":
+            st.session_state.pdfspec_text = load_file_or_default("defaultpdfspec.md", DEFAULT_PDFSPEC_MD)
 
-        # Controls
         opts = st.columns([1, 1, 1])
         with opts[0]:
-            st.session_state.pdfspec_strict_mode = st.checkbox(
-                t("spec_strict"),
-                value=bool(st.session_state.pdfspec_strict_mode),
-            )
+            st.session_state.pdfspec_strict_mode = st.checkbox(t("spec_strict"), value=bool(st.session_state.pdfspec_strict_mode))
         with opts[1]:
             st.session_state.pdfspec_unit_fallback = st.selectbox(
                 t("spec_units"),
@@ -1830,12 +1706,7 @@ def page_spec_to_pdf():
             )
 
         st.markdown(f"#### {t('spec_editor')}")
-        st.session_state.pdfspec_text = st.text_area(
-            "",
-            value=st.session_state.pdfspec_text,
-            height=520,
-            label_visibility="collapsed",
-        )
+        st.session_state.pdfspec_text = st.text_area("", value=st.session_state.pdfspec_text, height=520, label_visibility="collapsed")
 
         btns = st.columns([1, 1, 1])
         with btns[0]:
@@ -1850,8 +1721,7 @@ def page_spec_to_pdf():
                 st.session_state.pdfspec_last_validation = report
                 if report.get("normalized") is not None and not report.get("errors"):
                     st.session_state.pdfspec_last_valid_text = st.session_state.pdfspec_text
-                latency = int((time.time() - start) * 1000)
-                set_status("awaiting", latency_ms=latency)
+                set_status("awaiting", latency_ms=int((time.time() - start) * 1000))
                 st.rerun()
 
         with btns[1]:
@@ -1883,11 +1753,9 @@ def page_spec_to_pdf():
                 st.session_state.pdf_generated_from = "spec"
                 st.session_state.pdf_last_reconcile = None
 
-                # Save last valid spec text on successful generation
                 st.session_state.pdfspec_last_valid_text = st.session_state.pdfspec_text
 
-                latency = int((time.time() - start) * 1000)
-                set_status("done", latency_ms=latency)
+                set_status("done", latency_ms=int((time.time() - start) * 1000))
                 st.rerun()
 
         with btns[2]:
@@ -1895,22 +1763,17 @@ def page_spec_to_pdf():
                 if st.session_state.pdfspec_last_valid_text.strip():
                     st.session_state.pdfspec_text = st.session_state.pdfspec_last_valid_text
                     st.rerun()
-                else:
-                    st.info(t("spec_no_last_spec"))
 
-        # Reports
         st.write("")
         st.markdown(f"#### {t('spec_validation')}")
         rep = st.session_state.pdfspec_last_validation or {"errors": [], "warnings": []}
-        errs = rep.get("errors") or []
-        warns = rep.get("warnings") or []
         with st.expander(t("spec_validation"), expanded=True):
-            if errs:
-                st.error("\n".join([f"- {e}" for e in errs]))
+            if rep.get("errors"):
+                st.error("\n".join([f"- {e}" for e in rep["errors"]]))
             else:
                 st.success("No errors.")
-            if warns:
-                st.warning("\n".join([f"- {w}" for w in warns]))
+            if rep.get("warnings"):
+                st.warning("\n".join([f"- {w}" for w in rep["warnings"]]))
             else:
                 st.info("No warnings.")
 
@@ -1919,22 +1782,24 @@ def page_spec_to_pdf():
         if st.session_state.pdf_bytes:
             st.markdown(pdf_iframe_view(st.session_state.pdf_bytes, height=720), unsafe_allow_html=True)
 
-            # Provide open in new tab link
+            # "Open in new tab" using HTML anchor; more reliable than markdown for data URLs
             b64 = base64.b64encode(st.session_state.pdf_bytes).decode("utf-8")
-            st.markdown(f"[{t('spec_open_new_tab')}]({{'data:application/pdf;base64,' + b64}})")
+            st.markdown(
+                f'<a href="data:application/pdf;base64,{b64}" target="_blank">{t("spec_open_new_tab")}</a>',
+                unsafe_allow_html=True,
+            )
 
             st.download_button(
                 label=t("spec_download"),
                 data=st.session_state.pdf_bytes,
-                file_name="dynamic_form.pdf",
+                file_name="dynamic_form_unicode.pdf",
                 mime="application/pdf",
                 use_container_width=True,
             )
 
             st.write("")
             with st.expander(t("spec_render_log"), expanded=False):
-                log = st.session_state.pdf_render_log or []
-                st.code("\n".join(log) if log else "—", language="text")
+                st.code("\n".join(st.session_state.pdf_render_log or []) or "—", language="text")
 
             st.write("")
             st.markdown(f"#### {t('spec_upload_pdf')}")
@@ -1942,26 +1807,20 @@ def page_spec_to_pdf():
             if up is not None:
                 uploaded_bytes = up.read()
                 st.success("Uploaded.")
-
                 if st.button(t("spec_reconcile"), use_container_width=True):
                     rep = st.session_state.pdfspec_last_validation
                     spec_norm = rep.get("normalized") if isinstance(rep, dict) else None
-
-                    # If no validated spec, try to validate current editor content
                     if not spec_norm:
-                        spec_obj, parse_errors = parse_pdfspec(st.session_state.pdfspec_text)
-                        if parse_errors:
-                            st.error("Spec parse failed; cannot reconcile.")
-                        else:
+                        spec_obj, pe = parse_pdfspec(st.session_state.pdfspec_text)
+                        if not pe:
                             vrep = validate_pdfspec(spec_obj)
-                            if vrep.get("errors"):
-                                st.error("Spec validation failed; cannot reconcile.")
-                            else:
+                            if not vrep.get("errors"):
                                 spec_norm = vrep.get("normalized")
-
                     if spec_norm:
                         st.session_state.pdf_last_reconcile = reconcile_pdf_vs_spec(spec_norm, uploaded_bytes)
                         st.rerun()
+                    else:
+                        st.error("Spec not valid; cannot reconcile.")
 
             if st.session_state.pdf_last_reconcile:
                 st.write("")
@@ -1995,14 +1854,10 @@ def page_notes():
     left, right = st.columns([1, 1])
     with left:
         st.markdown(f"#### {t('notes_paste')}")
-        st.session_state.note_content = st.text_area(
-            "", value=st.session_state.note_content, height=260, label_visibility="collapsed"
-        )
+        st.session_state.note_content = st.text_area("", value=st.session_state.note_content, height=260, label_visibility="collapsed")
 
         st.markdown("#### Persistent Prompt")
-        st.session_state.note_persistent_prompt = st.text_area(
-            "", value=st.session_state.note_persistent_prompt, height=100, label_visibility="collapsed"
-        )
+        st.session_state.note_persistent_prompt = st.text_area("", value=st.session_state.note_persistent_prompt, height=100, label_visibility="collapsed")
 
         if st.button(t("notes_transform"), use_container_width=True):
             st.session_state.note_markdown = organize_note_stub(st.session_state.note_content)
@@ -2047,13 +1902,9 @@ def page_notes():
 
     with right:
         st.markdown("#### Output (editable Markdown)")
-        st.session_state.note_markdown = st.text_area(
-            "", value=st.session_state.note_markdown, height=420, label_visibility="collapsed"
-        )
-
+        st.session_state.note_markdown = st.text_area("", value=st.session_state.note_markdown, height=420, label_visibility="collapsed")
         st.markdown("#### Rendered Preview")
-        preview = highlight_keywords_html(st.session_state.note_markdown, st.session_state.note_keyword_rules)
-        st.markdown(preview, unsafe_allow_html=True)
+        st.markdown(highlight_keywords_html(st.session_state.note_markdown, st.session_state.note_keyword_rules), unsafe_allow_html=True)
 
 
 def page_settings():
@@ -2074,10 +1925,7 @@ def page_settings():
                             st.session_state.session_keys[p] = k.strip()
                             st.success(t("settings_never_shown"))
             else:
-                if effective:
-                    st.success(f"{t('provider_ready')} (session)")
-                else:
-                    st.warning(t("provider_missing"))
+                st.success(f"{t('provider_ready')} (session)") if effective else st.warning(t("provider_missing"))
                 k = st.text_input(t("settings_enter_key"), type="password", key=f"key_{p}")
                 c1, c2 = st.columns([1, 1])
                 with c1:
@@ -2114,37 +1962,29 @@ def page_history():
         )
         st.write("")
 
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        if st.button(t("btn_save_version"), use_container_width=True):
-            snap = {
-                "ts": datetime.utcnow().isoformat() + "Z",
-                "lang": st.session_state.lang,
-                "theme": st.session_state.theme,
-                "style_key": st.session_state.style_key,
-                "origin": "ui_snapshot",
-                "form_hash": hash_text(st.session_state.form_content or ""),
-                "form_source_mode": st.session_state.form_source_mode,
-                "pipeline": json.loads(json.dumps(st.session_state.pipeline)),
-                "note_md_hash": hash_text(st.session_state.note_markdown or ""),
-                "pdf_generated_at": st.session_state.pdf_generated_at,
-                "pdf_generated_from": st.session_state.pdf_generated_from,
-            }
-            st.session_state.history.insert(0, snap)
-            st.success("Saved.")
-            st.rerun()
-
-    with c2:
-        st.caption("Versions are stored in session (ephemeral). Export/import can be added later.")
+    if st.button(t("btn_save_version"), use_container_width=True):
+        snap = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "lang": st.session_state.lang,
+            "theme": st.session_state.theme,
+            "style_key": st.session_state.style_key,
+            "origin": "ui_snapshot",
+            "form_hash": hash_text(st.session_state.form_content),
+            "form_source_mode": st.session_state.form_source_mode,
+            "pipeline": json.loads(json.dumps(st.session_state.pipeline)),
+            "note_md_hash": hash_text(st.session_state.note_markdown),
+            "pdf_generated_at": st.session_state.pdf_generated_at,
+            "pdf_generated_from": st.session_state.pdf_generated_from,
+        }
+        st.session_state.history.insert(0, snap)
+        st.success("Saved.")
+        st.rerun()
 
     if st.session_state.history:
         st.write("")
         for i, v in enumerate(st.session_state.history):
-            title = f"Version {i+1} — {v.get('ts','?')} — origin:{v.get('origin','?')}"
-            with st.expander(title):
+            with st.expander(f"Version {i+1} — {v.get('ts','?')} — origin:{v.get('origin','?')}"):
                 st.json(v, expanded=False)
-
-                # If this version includes a pdf, offer download
                 if "pdf_b64" in v:
                     try:
                         pdf_bytes = base64.b64decode(v["pdf_b64"])
@@ -2156,19 +1996,16 @@ def page_history():
                             use_container_width=True,
                         )
                     except Exception:
-                        st.warning("PDF artifact in this version could not be decoded.")
+                        st.warning("PDF artifact could not be decoded.")
 
-                b1, b2 = st.columns([1, 1])
-                with b1:
+                c1, c2 = st.columns(2)
+                with c1:
                     if st.button(t("btn_restore"), key=f"restore_{i}", use_container_width=True):
                         st.session_state.lang = v.get("lang", st.session_state.lang)
                         st.session_state.theme = v.get("theme", st.session_state.theme)
                         st.session_state.style_key = v.get("style_key", st.session_state.style_key)
-
                         if "pipeline" in v:
                             st.session_state.pipeline = v["pipeline"]
-
-                        # Restore spec + pdf if present
                         if "pdfspec_text" in v:
                             st.session_state.pdfspec_text = v["pdfspec_text"]
                         if "validation" in v:
@@ -2180,10 +2017,9 @@ def page_history():
                                 st.session_state.pdf_generated_from = v.get("origin")
                             except Exception:
                                 pass
-
                         st.success("Restored.")
                         st.rerun()
-                with b2:
+                with c2:
                     if st.button(t("btn_delete"), key=f"delete_{i}", use_container_width=True):
                         st.session_state.history.pop(i)
                         st.rerun()
